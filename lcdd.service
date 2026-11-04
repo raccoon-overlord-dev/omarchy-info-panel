@@ -1,0 +1,11 @@
+[Unit]
+Description=LCD stats daemon
+
+[Service]
+ExecStart=/usr/bin/python @DIR@/lcdd.py
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
