@@ -108,6 +108,22 @@ for codes, day, night in (
         ICONS[c] = (chr(day), chr(night))
 
 
+# wttr.in's own lang_it text leaks English for some codes (e.g. "Smoky haze"), so Italian is mapped from the code
+COND_IT = {}
+for codes, label in (
+    ((113,), "Sereno"), ((116,), "Poco nuvoloso"), ((119,), "Nuvoloso"), ((122,), "Coperto"), ((143,), "Foschia"), ((149,), "Foschia fumosa"),
+    ((176,), "Pioggia sparsa"), ((179,), "Neve sparsa"), ((182,), "Nevischio"), ((185, 281, 284), "Pioviggine gelata"),
+    ((200,), "Temporali"), ((227,), "Neve e vento"), ((230,), "Bufera di neve"), ((248,), "Nebbia"), ((260,), "Nebbia gelata"),
+    ((263, 266), "Pioviggine"), ((293, 296), "Pioggia debole"), ((299, 302), "Pioggia"), ((305, 308), "Pioggia forte"),
+    ((311, 314), "Pioggia gelata"), ((317, 320), "Nevischio"), ((323, 326), "Neve debole"), ((329, 332), "Neve"),
+    ((335, 338), "Neve forte"), ((350, 374, 377), "Grandine"), ((353,), "Rovesci"), ((356, 359), "Rovesci forti"),
+    ((362, 365), "Rovesci di nevischio"), ((368,), "Rovesci di neve"), ((371,), "Forti nevicate"),
+    ((386, 389), "Temporale"), ((392, 395), "Temporale con neve"),
+):
+    for c in codes:
+        COND_IT[c] = label
+
+
 def is_night(astro):
     """shortcut: compares sunrise/sunset (location time) with this machine's clock; wrong only for a city in another timezone."""
     try:
@@ -135,8 +151,9 @@ def fetch_weather(lang, city=""):
                              capture_output=True, text=True, timeout=8).stdout
         d = json.loads(out)
         cur = d["current_condition"][0]
-        day, night = ICONS.get(int(cur["weatherCode"]), ICONS[119])
-        cond = (cur.get(f"lang_{lang}") or cur["weatherDesc"])[0]["value"].strip()
+        code = int(cur["weatherCode"])
+        day, night = ICONS.get(code, ICONS[119])
+        cond = (lang == "it" and COND_IT.get(code)) or (cur.get(f"lang_{lang}") or cur["weatherDesc"])[0]["value"].strip()
         return night if is_night(d["weather"][0]["astronomy"][0]) else day, f"{cur['temp_C']}°C", cond
     except (OSError, ValueError, KeyError, IndexError, subprocess.TimeoutExpired):
         return None
@@ -277,18 +294,21 @@ def render(s, th, cfg):
     def text(xy, t, f, tok, anchor="ls"):
         d.text(xy, t, font=f, fill=th[tok], anchor=anchor)
 
-    def weather(x, y, maxx):
-        """Icon, temperature, then condition cut to fit before the date."""
+    def weather(y, left, right):
+        """Icon, temperature, condition: centred on the screen, kept between clock and date."""
         if not (cfg["show_weather"] and s.get("weather")):
             return
         icon, temp, cond = s["weather"]
         tf, cf = font("medium", 22), font("regular", 14)
+        tw = d.textlength(temp, font=tf)
+        while cond and 30 + tw + 8 + d.textlength(cond, font=cf) > right - left:
+            cond = cond[:-1]
+        w = 30 + tw + (8 + d.textlength(cond, font=cf) if cond else 0)
+        x = max(left, min(W / 2 - w / 2, right - w))
         text((x, y), icon, font("regular", 24), "accent")
         text((x + 30, y), temp, tf, "fg")
-        cx = x + 30 + d.textlength(temp, font=tf) + 8
-        while cond and cx + d.textlength(cond, font=cf) > maxx:
-            cond = cond[:-1]
-        text((cx, y), cond, cf, "dim")
+        if cond:
+            text((x + 38 + tw, y), cond, cf, "dim")
 
     def tailscale(y):
         """Dot + 'TS n' (peers online) at the right edge of the network line."""
@@ -306,7 +326,7 @@ def render(s, th, cfg):
     if layout == "rows":
         text((16, 37), clock, font("medium", 30), "fg")
         text((464, 32), date, font("regular", 16), "dim", "rs")
-        weather(116, 35, 356)
+        weather(35, 16 + d.textlength(clock, font=font("medium", 30)) + 12, 464 - d.textlength(date, font=font("regular", 16)) - 12)
         d.line((16, 48, 463, 48), fill=th["divider"])
         d.line((16, 278, 463, 278), fill=th["divider"])
         for i, (label, pct, st, detail, _, sec, sec_tok) in enumerate(m):
@@ -326,7 +346,7 @@ def render(s, th, cfg):
     else:
         text((12, 31), clock, font("medium", 26), "fg")
         text((468, 28), date, font("regular", 16), "dim", "rs")
-        weather(98, 30, 364)
+        weather(30, 12 + d.textlength(clock, font=font("medium", 26)) + 12, 468 - d.textlength(date, font=font("regular", 16)) - 12)
         for i, (label, pct, st, _, detail, sec, sec_tok) in enumerate(m):
             x0, y0 = 8 + (i % 2) * 236, 44 + (i // 2) * 120
             d.rectangle((x0, y0, x0 + 227, y0 + 111), outline=th["outline"], width=1)
