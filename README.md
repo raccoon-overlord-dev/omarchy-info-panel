@@ -18,6 +18,7 @@ A small daemon that shows live PC stats on a 3.5" USB LCD (the cheap "USB2LCD AI
 - Network download / upload on one line
 - Optional Tailscale status (running + peers online)
 - Two layouts, English or Italian, brightness and refresh rate from a config file
+- Live backlight keys: Ctrl + the display brightness keys dim or brighten the panel (Omarchy / Hyprland)
 
 ## Hardware
 
@@ -68,7 +69,7 @@ weather_city   = ""         # e.g. "Vicenza"; empty = use the Omarchy weather lo
 | `layout` | `rows`, `tiles` | One line per metric, or a 2×2 grid. |
 | `theme` | `omarchy`, `neutral` | `omarchy` reads `~/.local/state/omarchy/current/theme/colors.toml` and redraws within about a second when the Omarchy theme changes. |
 | `refresh` | seconds, min `0.2` | A full-screen redraw takes about 0.8 s, so going far below 1 s will not help. |
-| `brightness` | `0`-`7` | `0` turns the backlight off. |
+| `brightness` | `0`-`7` | `0` turns the backlight off. On the tested panel levels 0-2 are dark, so use `3`-`7` for a visible image. |
 | `language` | `en`, `it` | Weekday and month names, "used / free", and the weather condition text. |
 | `show_weather` | `true`, `false` | Weather comes from wttr.in, refreshed every 10 minutes, metric units only. |
 | `show_tailscale` | `true`, `false` | Checked every 10 seconds. |
@@ -76,11 +77,25 @@ weather_city   = ""         # e.g. "Vicenza"; empty = use the Omarchy weather lo
 
 An unknown `layout`, `theme` or `language` falls back to the default and logs a warning. `brightness` and `refresh` are clamped to their ranges.
 
+## Brightness keys
+
+The daemon changes the backlight at runtime on two signals: `SIGUSR1` = one step dimmer, `SIGUSR2` = one step brighter. The keys cover levels 3-7 (the visible ones on the tested panel, shown as 0 / 25 / 50 / 75 / 100 %) and never switch the backlight off. The new level is not saved: `systemctl --user reload lcdd` or a restart goes back to `brightness` from the config. Each step also shows the Omarchy on-screen popup (`omarchy-osd`, skipped if it is missing).
+
+To bind Ctrl + the display brightness keys (Fn + F1/F2 on many keyboards) in Omarchy, add to `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("CTRL + XF86MonBrightnessDown", "Info LCD dimmer", "systemctl --user kill --kill-whom=main -s USR1 lcdd", { locked = true, repeating = true })
+o.bind("CTRL + XF86MonBrightnessUp", "Info LCD brighter", "systemctl --user kill --kill-whom=main -s USR2 lcdd", { locked = true, repeating = true })
+```
+
+`--kill-whom=main` matters: without it systemd also signals the `nvidia-smi` child.
+
 ## Everyday commands
 
 ```bash
 systemctl --user status lcdd        # is it running?
 systemctl --user reload lcdd        # apply config changes
+systemctl --user kill --kill-whom=main -s USR1 lcdd  # dimmer one step (USR2 = brighter)
 systemctl --user restart lcdd       # restart (also resets the display)
 journalctl --user -u lcdd -f        # live logs
 python lcdd.py --png out.png        # render one frame to a PNG, no hardware needed

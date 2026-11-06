@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """lcdd: draw CPU/RAM/GPU/VRAM/NET stats on the AX206 USB LCD (1908:0102, 480x320).
 
-usage: lcdd.py            run daemon (SIGHUP reloads config)
+usage: lcdd.py            run daemon (SIGHUP reloads config, SIGUSR1/SIGUSR2 dim/brighten one step)
        lcdd.py --png F    render one frame to F, no hardware
 Config: ~/.config/lcdd/config.toml
   layout = "rows" | "tiles"       theme = "omarchy" (follow system theme) | "neutral"
@@ -424,8 +424,11 @@ def main():
         st["ts"] = fetch_ts() if cfg["show_tailscale"] else None
         render(st, load_theme(cfg["theme"]), cfg).save(sys.argv[sys.argv.index("--png") + 1])
         return
-    state = {"reload": False, "run": True}
+    state = {"reload": False, "run": True, "step": 0}
+    wake = threading.Event()  # cuts the refresh sleep short so a key press shows at once
     signal.signal(signal.SIGHUP, lambda *_: state.update(reload=True))
+    signal.signal(signal.SIGUSR1, lambda *_: (state.update(step=state["step"] - 1), wake.set()))
+    signal.signal(signal.SIGUSR2, lambda *_: (state.update(step=state["step"] + 1), wake.set()))
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: state.update(run=False))
     stats, lcd, prev = Stats(), None, None
@@ -446,6 +449,14 @@ def main():
                 theme, stamp, prev = load_theme(cfg["theme"]), theme_stamp(), None
             elif cfg["theme"] == "omarchy" and theme_stamp() != stamp:  # omarchy theme switched
                 theme, stamp, prev = load_theme("omarchy"), theme_stamp(), None
+            if state["step"]:  # SIGUSR1/2: runtime dim/brighten, lost on reload
+                cfg["brightness"] = min(7, max(3, cfg["brightness"] + state["step"]))  # backlight 0-2 is dark on this panel
+                state["step"] = 0
+                lcd.brightness(cfg["brightness"])
+                try:  # Omarchy popup with the info-display icon; absent outside Omarchy
+                    subprocess.Popen(["omarchy-osd", "-i", "󰨇", "-p", str((cfg["brightness"] - 3) * 25)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except OSError:
+                    pass
             st = stats.read()
             st.update(extra)
             img = render(st, theme, cfg)
@@ -457,7 +468,8 @@ def main():
             lcd, prev = None, None
             time.sleep(3)
             continue
-        time.sleep(max(0, cfg["refresh"] - (time.monotonic() - t0)))
+        wake.wait(max(0, cfg["refresh"] - (time.monotonic() - t0)))
+        wake.clear()
 
 
 if __name__ == "__main__":
